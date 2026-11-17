@@ -1,0 +1,376 @@
+x-kafka-common: &kafka-common
+  image: apache/kafka:3.8.1
+  networks:
+    - store-net
+
+x-kafka-controller: &kafka-controller
+  <<: *kafka-common
+  environment: &controller-env
+    CLUSTER_ID: iXXbupu2QjCs4S7vop7_mQ
+    KAFKA_PROCESS_ROLES: controller
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    KAFKA_LOG_DIRS: /tmp/kraft-logs
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+
+x-kafka-broker: &kafka-broker
+  <<: *kafka-common
+  environment: &broker-env
+    CLUSTER_ID: iXXbupu2QjCs4S7vop7_mQ
+    KAFKA_PROCESS_ROLES: broker
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller-1:9093,2@controller-2:9093,3@controller-3:9093
+    KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    KAFKA_LOG_DIRS: /tmp/kraft-logs
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  healthcheck:
+    test: nc -z localhost 19092 || exit 1
+    interval: 15s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+
+services:
+  controller-1:
+    <<: *kafka-controller
+    container_name: controller-1
+    environment:
+      <<: *controller-env
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: CONTROLLER://:9093
+
+  controller-2:
+    <<: *kafka-controller
+    container_name: controller-2
+    environment:
+      <<: *controller-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: CONTROLLER://:9093
+
+  controller-3:
+    <<: *kafka-controller
+    container_name: controller-3
+    environment:
+      <<: *controller-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: CONTROLLER://:9093
+
+  broker-1:
+    <<: *kafka-broker
+    container_name: broker-1
+    depends_on:
+      controller-1:
+        condition: service_started
+      controller-2:
+        condition: service_started
+      controller-3:
+        condition: service_started
+    ports:
+      - "9092:9092"
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 11
+      KAFKA_LISTENERS: EXTERNAL://:9092,INTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://broker-1:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+
+  broker-2:
+    <<: *kafka-broker
+    container_name: broker-2
+    depends_on:
+      controller-1:
+        condition: service_started
+      controller-2:
+        condition: service_started
+      controller-3:
+        condition: service_started
+    ports:
+      - "9094:9094"
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 12
+      KAFKA_LISTENERS: EXTERNAL://:9094,INTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9094,INTERNAL://broker-2:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+
+  broker-3:
+    <<: *kafka-broker
+    container_name: broker-3
+    depends_on:
+      controller-1:
+        condition: service_started
+      controller-2:
+        condition: service_started
+      controller-3:
+        condition: service_started
+    ports:
+      - "9096:9096"
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 13
+      KAFKA_LISTENERS: EXTERNAL://:9096,INTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9096,INTERNAL://broker-3:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      broker-1:
+        condition: service_healthy
+      broker-2:
+        condition: service_healthy
+      broker-3:
+        condition: service_healthy
+    ports:
+      - "8085:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: vidalstore
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: broker-1:19092,broker-2:19092,broker-3:19092
+      DYNAMIC_CONFIG_ENABLED: true
+    networks:
+      - store-net
+
+  database:
+    container_name: database-vidalstore
+    image: postgres:18
+
+    env_file: ".env"
+
+    environment:
+      - POSTGRES_USER=${DB_USER:-store}
+      - POSTGRES_PASSWORD=${DB_PASS:-store}
+      - POSTGRES_DB=store_db
+
+    networks:
+      - store-net
+    ports:
+      - "5432:5432"
+    volumes:
+        - store-data:/var/lib/postgresql
+
+
+  back-juegos:
+    container_name: backend-juegos
+    depends_on:
+      database:
+        condition: service_started
+      rabbit1:
+        condition: service_healthy
+    build:
+      context: "."
+
+    env_file: ".env"
+    environment:
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbit1:5672
+      KAFKA_BROKERS: broker-1:19092,broker-2:19092,broker-3:19092
+
+
+    networks:
+      - store-net
+    ports:
+      - "3000:3000"
+
+
+  back-licenses:
+    container_name: backend-licenses
+    depends_on:
+      database:
+        condition: service_started
+      rabbit1:
+        condition: service_started
+      broker-1:
+        condition: service_healthy
+      broker-2:
+        condition: service_healthy
+      broker-3:
+        condition: service_healthy
+
+    build:
+      context: "."
+
+    env_file: ".env"
+    environment:
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbit1:5672
+      KAFKA_BROKERS: broker-1:19092,broker-2:19092,broker-3:19092
+
+    networks:
+      - store-net
+    ports:
+      - "3001:3000"
+
+  bff-vidalstore:
+    container_name: bff-vidalstore
+
+    env_file: ".env"
+    build:
+      context: "repos/VidalStoreBff"
+
+    networks:
+      - store-net
+    ports:
+      - "3002:3002"
+
+
+
+  gateway-vidalstore:
+    container_name: gateway-vidalstore
+
+    env_file: ".env"
+    build:
+      context: "repos/VidalStoreGateway"
+
+    networks:
+      - store-net
+    ports:
+      - "8080:8080"
+
+  front-store:
+    container_name: front-vidalstore
+    depends_on:
+      - database
+
+    build:
+      context: "repos/VidalStoreFront"
+
+    networks:
+      - store-net
+    ports:
+      - "4200:80"
+
+  admin-store:
+    container_name: admin-vidalstore
+
+    build:
+      context: "repos/VidalStoreAdmin"
+
+    networks:
+      - store-net
+    ports:
+      - "3020:3020"
+
+    env_file: ".env"
+    environment:
+      PORT: 3020
+      RABBIT_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbit1:5672
+      RABBIT_ADMIN_URL: http://rabbit1:15672
+
+  kafka-init:
+    container_name: kafka-init
+    image: apache/kafka:3.8.1
+    depends_on:
+      broker-1:
+        condition: service_healthy
+      broker-2:
+        condition: service_healthy
+      broker-3:
+        condition: service_healthy
+    networks:
+      - store-net
+    entrypoint: >
+      sh -c "
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker-1:19092 --create --if-not-exists --topic vidalstore.compras    --partitions 3 --replication-factor 3 --config min.insync.replicas=2 --config retention.ms=604800000 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker-1:19092 --create --if-not-exists --topic vidalstore.compras.dlt --partitions 3 --replication-factor 3 --config min.insync.replicas=2 --config retention.ms=604800000 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker-1:19092 --create --if-not-exists --topic vidalstore.actividad    --partitions 3 --replication-factor 3 --config min.insync.replicas=2 --config retention.ms=604800000 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker-1:19092 --create --if-not-exists --topic vidalstore.actividad.dlt --partitions 3 --replication-factor 3 --config min.insync.replicas=2 --config retention.ms=604800000 &&
+        echo 'Todos los topics creados correctamente'
+      "
+    restart: "no"
+
+  eventos-store:
+    container_name: eventos-vidalstore
+    depends_on:
+      broker-1:
+        condition: service_healthy
+      broker-2:
+        condition: service_healthy
+      broker-3:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+    build:
+      context: "repos/VidalStoreEventos"
+
+    networks:
+      - store-net
+    ports:
+      - "3010:3010"
+
+    env_file: ".env"
+    environment:
+      PORT: 3010
+      RABBIT_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbit1:5672
+      RABBIT_ADMIN_URL: http://rabbit1:15672
+      KAFKA_BROKERS: broker-1:19092,broker-2:19092,broker-3:19092
+
+
+  rabbit1:
+    container_name: rabbit1
+    hostname: rabbit1
+    image: rabbitmq:4.3-management
+
+    env_file: ".env"
+    environment:
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_COOKIE}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+
+    networks:
+      - store-net
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbit1-data:/var/lib/rabbitmq
+      - ./rabbitmq/cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
+
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  rabbit2:
+    container_name: rabbit2
+    hostname: rabbit2
+    image: rabbitmq:4.3-management
+
+    env_file: ".env"
+    environment:
+        RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_COOKIE}
+        RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+        RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+
+    networks:
+      - store-net
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    volumes:
+      - rabbit2-data:/var/lib/rabbitmq
+      - ./rabbitmq/cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+
+
+volumes:
+  store-data:
+  rabbit1-data:
+  rabbit2-data:
+
+networks:
+  store-net:
+    driver: "bridge"
