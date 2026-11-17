@@ -28,7 +28,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       database: process.env.DB_NAME||'test',
       entities: [Deleter,Game,License],
       synchronize: true,
-    }), GameModule, AuthModule, MessagingModule
+    }), GameModule, MessagingModule
   ],
 })
 export class AppModule {}
