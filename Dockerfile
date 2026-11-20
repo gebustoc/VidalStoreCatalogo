@@ -1,12 +1,12 @@
-FROM node:24 AS builder
+FROM node:24-slim AS builder
 WORKDIR /data
 COPY *.json .
-RUN npm install
+RUN npm ci
 COPY src/ ./src
-RUN npm run build
+RUN npm run build && npm prune --omit=dev
 
 
-FROM node:24-alpine AS runner
+FROM node:24-slim AS runner
 
 WORKDIR /app
 COPY --from=builder /data/dist .
