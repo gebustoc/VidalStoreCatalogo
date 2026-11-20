@@ -52,7 +52,7 @@ export class GameController {
     const evento = plainToInstance(Game, body);
     const errores = validateSync(evento, { whitelist: true, forbidNonWhitelisted: true });
     if (errores.length !== 0)throw new BadRequestException("missing body"); 
-
+   
     return this.gameService.writeGame(id,body);  
   }
 
@@ -63,6 +63,8 @@ export class GameController {
     const evento = plainToInstance(Game, body);
     const errores = validateSync(evento, { whitelist: true, forbidNonWhitelisted: true });
     if (errores.length !== 0)throw new BadRequestException("Bad Body"); 
+     if ((body as Game).id != undefined)throw new BadRequestException(); 
+
     return this.gameService.addGame(body as Game);
   }
 
