@@ -1,8 +1,9 @@
-import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Put } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, NotFoundException, Param, Post, Put } from '@nestjs/common';
 import { Game } from '../model/Game.js';
 import { GameService } from '../service/game.service.js';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
+import { Claims, verifyToken } from '../verification.js';
 
 
 @Controller()
@@ -13,6 +14,13 @@ export class GameController {
   async getGames() : Promise<Array<Game>>{
     return this.gameService.getGames();
   }
+
+  @Get("/v1/biblioteca")
+  async getBiblioteca(@Headers('authorization') auth : string) : Promise<Game[]>{
+    const claims :Claims = await verifyToken(auth) 
+    return await this.gameService.getLibrary(claims.sub)
+  }
+
 
   @Get("/v1/catalogo/:id")
   async getGame(@Param("id") idText : string) : Promise<Game|null>{

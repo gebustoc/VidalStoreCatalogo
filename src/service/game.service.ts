@@ -6,79 +6,94 @@ import { Repository } from 'typeorm';
 import { RabbitMqService } from '../rabbitmq/rabbitmq.service.js';
 import { KafkaService } from '../kafka/kafka.service.js';
 import { EXCHANGES, ROUTING_KEYS } from '../messaging/topology.js';
+import { License } from '../model/License.js';
 
 @Injectable()
 export class GameService {
   constructor(
     @InjectRepository(Game) private gameRepository: Repository<Game>,
+    @InjectRepository(License) private authRepository: Repository<License>,
+
     private readonly rabbitMqService: RabbitMqService,
     private readonly kafkaService: KafkaService,
+
   ) {
     this.Initialize()
   }
 
-async Initialize() {
-  try {
-    let results: Array<Partial<Game>> = [];
-    console.log(process.env.GAME_CATALOG_SOURCE)
+  async Initialize() {
+    try {
+      let results: Array<Partial<Game>> = [];
+      console.log(process.env.GAME_CATALOG_SOURCE)
 
-    if (process.env.GAME_CATALOG_SOURCE === 'mock') {
-      // type safety removed becuase it was not allowing the JSON file to be parsed as games
-      const mockFile = process.env.GAME_MOCK_FILE ?? '/app/mocks/games.json';
-      const data = JSON.parse(await readFile(mockFile, 'utf8'));// as {results?: Array<Partial<Game>>;};
-      results = data ?? [];
-      console.log(`[GameService] ${results.length} juegos cargados desde mock.`);
+      if (process.env.GAME_CATALOG_SOURCE === 'mock') {
+        // type safety removed becuase it was not allowing the JSON file to be parsed as games
+        const mockFile = process.env.GAME_MOCK_FILE ?? '/app/mocks/games.json';
+        const data = JSON.parse(await readFile(mockFile, 'utf8'));// as {results?: Array<Partial<Game>>;};
+        results = data ?? [];
+        console.log(`[GameService] ${results.length} juegos cargados desde mock.`);
 
-    } else {
-      const response = await fetch(`https://api.rawg.io/api/games?key=${process.env.RAWG_KEY}&page_size=80`,);
+      } else {
+        const response = await fetch(`https://api.rawg.io/api/games?key=${process.env.RAWG_KEY}&page_size=80`,);
 
-      if (!response.ok) {
-        console.warn(`[GameService] RAWG API respondió con status ${response.status}, omitiendo carga inicial de juegos.`);
+        if (!response.ok) {
+          console.warn(`[GameService] RAWG API respondió con status ${response.status}, omitiendo carga inicial de juegos.`);
+          return;
+        }
+
+        const data = await response.json() as { results?: Array<Partial<Game>> };
+        results = data.results ?? [];
+      }
+
+      if (!Array.isArray(results)) {
+        console.warn('[GameService] Catálogo inválido, omitiendo carga inicial de juegos.');
         return;
       }
 
-      const data = await response.json() as { results?: Array<Partial<Game>> };
-      results = data.results ?? [];
-    }
+      for (const game of results) {
+        if (!game.slug || !game.name) {
+          console.warn('[GameService] Juego inválido en el catálogo, omitiendo registro.');
+          continue;
+        }
 
-    if (!Array.isArray(results)) {
-      console.warn('[GameService] Catálogo inválido, omitiendo carga inicial de juegos.');
-      return;
-    }
-
-    for (const game of results) {
-      if (!game.slug || !game.name) {
-        console.warn('[GameService] Juego inválido en el catálogo, omitiendo registro.');
-        continue;
+        await this.gameRepository
+          .createQueryBuilder()
+          .insert()
+          .into(Game)
+          .values({
+            ...game,
+            lowercasename: game.name.toLowerCase(),
+          })
+          .orIgnore()
+          .execute();
       }
-
-      await this.gameRepository
-        .createQueryBuilder()
-        .insert()
-        .into(Game)
-        .values({
-          ...game,
-          lowercasename: game.name.toLowerCase(),
-        })
-        .orIgnore()
-        .execute();
+      if (process.env.GAME_CATALOG_SOURCE !== 'mock') {
+        console.log(`[GameService] ${results.length} juegos cargados desde RAWG.`);
+      }
+    } catch (error) {
+      console.warn('[GameService] No se pudo contactar la API de RAWG:', (error as Error).message);
+      console.warn('[GameService] El backend continúa sin juegos precargados.');
     }
-    if (process.env.GAME_CATALOG_SOURCE !== 'mock') {
-      console.log(`[GameService] ${results.length} juegos cargados desde RAWG.`);
-    }
-  } catch (error) {
-    console.warn('[GameService] No se pudo contactar la API de RAWG:', (error as Error).message);
-    console.warn('[GameService] El backend continúa sin juegos precargados.');
   }
-}
+  
+  async getLibrary(uid: string): Promise<Array<Game>>{
+      // Query the database for all licenses belonging to this user
+      const licenses = await this.authRepository.find({
+          where: { uid },
+          relations: { game: true }
+      });
+
+      // Extract and return the games from the licenses
+      return licenses
+          .filter(license => license.game != undefined)
+          .map(license => license.game);
+  }
 
   async getGames(): Promise<Array<Game>>{
     return this.gameRepository.find();
   }
 
   async getGame(id: number): Promise<Game|null>{
-    
-
     return this.gameRepository.findOneBy({ id })
   }
 
