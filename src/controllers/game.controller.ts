@@ -17,7 +17,12 @@ export class GameController {
 
   @Get("/v1/biblioteca")
   async getBiblioteca(@Headers('authorization') auth : string) : Promise<Game[]>{
-    const claims :Claims = await verifyToken(auth) 
+    let claims :Claims 
+    try{
+      claims = await verifyToken(auth) 
+    }catch(error){
+      throw new BadRequestException(error)
+    }
     return await this.gameService.getLibrary(claims.sub)
   }
 
