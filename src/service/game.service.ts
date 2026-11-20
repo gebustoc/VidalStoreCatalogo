@@ -77,6 +77,8 @@ async Initialize() {
   }
 
   async getGame(id: number): Promise<Game|null>{
+    
+
     return this.gameRepository.findOneBy({ id })
   }
 
