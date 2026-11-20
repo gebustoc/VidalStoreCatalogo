@@ -13,7 +13,6 @@ export class GameService {
   constructor(
     @InjectRepository(Game) private gameRepository: Repository<Game>,
     @InjectRepository(License) private authRepository: Repository<License>,
-
     private readonly rabbitMqService: RabbitMqService,
     private readonly kafkaService: KafkaService,
 
@@ -75,18 +74,18 @@ export class GameService {
       console.warn('[GameService] El backend continúa sin juegos precargados.');
     }
   }
-  
-  async getLibrary(uid: string): Promise<Array<Game>>{
-      // Query the database for all licenses belonging to this user
-      const licenses = await this.authRepository.find({
-          where: { uid },
-          relations: { game: true }
-      });
 
-      // Extract and return the games from the licenses
-      return licenses
-          .filter(license => license.game != undefined)
-          .map(license => license.game);
+  async getLibrary(uid: string): Promise<Array<Game>>{
+    // Query the database for all licenses belonging to this user
+    const licenses = await this.authRepository.find({
+        where: { uid },
+        relations: { game: true }
+    });
+
+    // Extract and return the games from the licenses
+    return licenses
+        .filter(license => license.game != undefined)
+        .map(license => license.game);
   }
 
   async getGames(): Promise<Array<Game>>{
